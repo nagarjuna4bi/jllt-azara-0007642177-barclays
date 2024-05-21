@@ -1,0 +1,59 @@
+import tableauserverclient as TSC
+import os
+import shlex  # Import shlex for correct parsing
+
+def get_full_project_paths(server):
+    all_projects = list(TSC.Pager(server.projects.get))
+    project_paths = {}
+    for project in all_projects:
+        path = project.name  # Start with the project name
+        parent_id = project.parent_id
+        # Traverse up the hierarchy to build the full path
+        while parent_id:
+            parent = next((p for p in all_projects if p.id == parent_id), None)
+            path = parent.name + '\\' + path if parent else path
+            parent_id = parent.parent_id if parent else None
+        project_paths[path] = project.id
+    return project_paths
+
+def main():
+    server_url = os.getenv('TABLEAU_SITE_URL')
+    token_name = os.getenv('TABLEAU_TOKEN_NAME')
+    token_value = os.getenv('TABLEAU_TOKEN_VALUE')
+    site_id = os.getenv('TABLEAU_SITE_ID')
+
+    server = TSC.Server(server_url, use_server_version=True)
+    token_auth = TSC.PersonalAccessTokenAuth(token_name, token_value, site_id)
+
+    with server.auth.sign_in(token_auth):
+        project_paths = get_full_project_paths(server)
+        
+        changed_files = shlex.split(os.getenv('CHANGED_FILES', ''))  # Use shlex.split to handle spaces in filenames
+        if not changed_files:
+            print("No workbook files detected to publish.")
+            return
+
+        for workbook_path in changed_files:
+            if not os.path.exists(workbook_path):
+                print(f"Workbook path does not exist: {workbook_path}")
+                continue
+
+            workbook_project_path = os.path.dirname(workbook_path).replace('/', '\\')  # Ensure Windows path format
+            project_id = project_paths.get(workbook_project_path)
+            if not project_id:
+                print(f"Project path '{workbook_project_path}' does not exist. Cannot publish workbook.")
+                continue
+            
+            # Remove file extension from workbook name
+            workbook_name = os.path.splitext(os.path.basename(workbook_path))[0]
+            new_workbook = TSC.WorkbookItem(name=workbook_name, project_id=project_id)
+            server.workbooks.publish(new_workbook, workbook_path, TSC.Server.PublishMode.Overwrite)
+            print(f"Workbook '{workbook_name}' published successfully to the project path: {workbook_project_path}")
+
+if __name__ == '__main__':
+    main()
+
+ 
+    
+ 
+    
